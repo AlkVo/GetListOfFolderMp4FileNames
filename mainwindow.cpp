@@ -1,15 +1,27 @@
-#include "mainwindow.h"
+﻿#include "mainwindow.h"
 #include "ui_mainwindow.h"
-#include <QFileDialog>
 #include <QDebug>
-#include <QDir>
-#include <QFileInfo>
-#include <QMediaPlayer>
+#include <QFileDialog>
+#include <QMovie>
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    m_folder = new FolderHandle();
+    m_thread = new QThread();
+
+    m_folder->moveToThread(m_thread);
+
+    connect(this,&MainWindow::sig_makeListFile,
+            m_folder,&FolderHandle::slot_makeListFile);
+
+    connect(m_folder,&FolderHandle::sig_progressValue,
+            this,&MainWindow::slot_progressValue);
+
+    m_thread->start();
+
+    ui->progressBar->hide();
 }
 
 MainWindow::~MainWindow()
@@ -17,78 +29,42 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-QFileInfoList MainWindow:: getAllFolderListPath(QString path)
-{
-    qDebug()<<"path"<<path;
-    QDir dir(path);
-    dir.setFilter(QDir::AllDirs|QDir::NoDotAndDotDot);
-    QFileInfoList fileInfoList = dir.entryInfoList();
-
-    if(fileInfoList.length() !=0 )
-    {
-        //遍历文件夹内的所有文件夹
-        foreach (QFileInfo folder, fileInfoList)
-        {
-            QFileInfoList subFileInfoList =  getAllFolderListPath(folder.absoluteFilePath());
-            if(subFileInfoList.length() !=0)
-            {
-                fileInfoList.append(subFileInfoList);
-            }
-        }
-    }
-
-    return fileInfoList;
-}
-
-QStringList MainWindow::getAllFileName(QString preName,QFileInfoList allFileInfoList)
-{
-    QStringList fileNameList;
-    foreach (QFileInfo folder, allFileInfoList)
-    {
-        QDir dir(folder.absoluteFilePath());
-        dir.setFilter(QDir::Files|QDir::NoDotAndDotDot);
-        dir.setNameFilters(QStringList("*.mp4"));
-
-        QFileInfoList mp4InfoList = dir.entryInfoList();
-        if(mp4InfoList.length() != 0)
-        {
-            fileNameList.append(folder.filePath().remove(preName+"/"));
-            foreach (QFileInfo mp4Info, mp4InfoList)
-            {
-                fileNameList.append(mp4Info.fileName().remove(".mp4"));
-            }
-            fileNameList.append("");
-        }
-    }
-    return fileNameList;
-}
-
-bool MainWindow::writeFileIntoTxt(QString savePath, QStringList nameList)
-{
-    QFile file(savePath+"/list.txt");
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
-        return false;
-
-    foreach(QString name,nameList)
-    {
-        QByteArray  strBytes=(name+"\n").toUtf8();
-        //QByteArray  strBytes=str.toLocal8Bit();
-        file.write(strBytes,strBytes.length());  //写入文件
-    }
-    file.close();
-
-    return true;
-}
-
-
 void MainWindow::on_pushButton_clicked()
 {
-    QString preName = QFileDialog::getExistingDirectory(this, tr("Open Directory"),
-                                                        "/home",
-                                                        QFileDialog::ShowDirsOnly
-                                                        | QFileDialog::DontResolveSymlinks);
-    QFileInfoList allFileInfoList =  getAllFolderListPath(preName);
-    allFileInfoList.append(QFileInfo(preName));
+    QString selectedPath = QFileDialog::getExistingDirectory(this, tr("Open Directory"),
+                                                             "/home",
+                                                             QFileDialog::ShowDirsOnly
+                                                             | QFileDialog::DontResolveSymlinks);
+    QString filterType = ui->lineEdit->text();
 
-    writeFileIntoTxt(preName,getAllFileName(preName,allFileInfoList));
+    if(selectedPath != "" && filterType != "")
+    {
+
+        //设置过滤类型
+        m_folder->setFilterType(filterType);
+        //生成文件
+        emit sig_makeListFile(selectedPath);
+
+        //初始化进度条
+        ui->progressBar->show();
+        slot_progressValue(true,0);
+    }
+    else
+    {
+        ui->progressBar->hide();
+    }
 }
+
+void MainWindow::slot_progressValue(bool isSucced, const int value)
+{
+    ui->progressBar->setStyleSheet("QProgressBar{color: rgb(255, 255, 255);}QProgressBar::chunk {background-color: #2ebf91;width: 20px;}");
+    if(isSucced)
+    {
+        ui->progressBar->setValue(value);
+    }
+    else
+    {
+        ui->progressBar->setStyleSheet("QProgressBar::chunk {background-color: #2ebf91;width: 20px;}");
+    }
+}
+
